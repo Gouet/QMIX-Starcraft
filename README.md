@@ -9,7 +9,17 @@
 [*The StarCraft Multi-Agent Challenge : Research Paper*](https://arxiv.org/pdf/1902.04043.pdf)
 
 
-## Train an AI
+## Setup
+
+Using Pytorch 1.3.
+
+Anaconda.
+
+Windows 10.
+
+Be sure to set up the environment variable : SC2PATH (see lauch.bat)
+
+### Train an AI
 
 ```
 python train.py --scenario 3m --train
@@ -22,7 +32,7 @@ launch.bat
 ```
 
 
-## Launch the AI
+### Launch the AI
 
 ```
 python train.py --scenario 3m --load-episode-saved [episode number]
