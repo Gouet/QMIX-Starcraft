@@ -22,7 +22,7 @@ Be sure to set up the environment variable : SC2PATH (see lauch.bat)
 ### Train an AI
 
 ```
-python train.py --scenario 3m --train
+python train.py --scenario [scenario_name] --train
 ```
 
 *or*
@@ -35,7 +35,7 @@ launch.bat
 ### Launch the AI
 
 ```
-python train.py --scenario 3m --load-episode-saved [episode number]
+python train.py --scenario [scenario_name] --load-episode-saved [episode number]
 ```
 
 *or*
