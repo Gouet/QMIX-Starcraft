@@ -15,10 +15,24 @@
 python train.py --scenario 3m --train
 ```
 
+*or*
+
+```
+launch.bat
+```
+
+
 ## Launch the AI
 
 ```
 python train.py --scenario 3m --load-episode-saved [episode number]
+```
+
+*or*
+
+
+```
+launch eval.bat
 ```
 
 This will generate a SC2Replay file in {SC2_PATH}/Replays/replay
