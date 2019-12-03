@@ -14,7 +14,7 @@ device = torch.device("cuda" if use_cuda else "cpu")
 def main(arglist):
     current_time = strftime("%Y-%m-%d-%H-%M-%S", gmtime())
     writer = SummaryWriter(log_dir='./logs/' + current_time + '-snake')
-    actors = 8
+    actors = 6
     if arglist.train == False:
         actors = 1
     env_runner = runner.Runner(arglist, arglist.scenario, actors)

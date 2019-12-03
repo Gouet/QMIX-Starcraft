@@ -70,7 +70,7 @@ class ReplayBuffer(object):
         obs_batch = np.array([_[5] for _ in batch], dtype='float32')
         obs2_batch = np.array([_[6] for _ in batch], dtype='float32')
         available_actions_batch = np.array([_[7] for _ in batch], dtype='float32')
-        available_actions2_batch = np.array([_[8] for _ in batch], dtype='float32')
+        available_actions2_batch = np.array([_[8] for _ in batch])
         filled_batch = np.array([_[9] for _ in batch], dtype='float32')
 
         return s_batch, s2_batch, a_batch, r_batch, t_batch, obs_batch, obs2_batch, available_actions_batch, available_actions2_batch, filled_batch
@@ -100,7 +100,7 @@ class EpisodeBatch:
         max_episode_len = 0
 
         for replay_buffer in batch:
-            _, _, _, _, t, _, _, _, _, _ = replay_buffer.sample_batch(60)
+            _, _, _, _, t, _, _, _, _, _ = replay_buffer.sample_batch(replay_buffer.size())
             for idx, t_idx in enumerate(t):
                 if t_idx == True:
                     if idx > max_episode_len:
@@ -149,7 +149,7 @@ class EpisodeBatch:
         return self.count
 
 class QMix:
-    def __init__(self, training, agent_nb, obs_shape, states_shape, action_n, lr, gamma=0.99, batch_size=32, replay_buffer_size=5000, update_target_network=200, final_step=50000):
+    def __init__(self, training, agent_nb, obs_shape, states_shape, action_n, lr, gamma=0.99, batch_size=16, replay_buffer_size=5000, update_target_network=200, final_step=50000): #32
         self.training = training
         self.gamma = gamma
         self.batch_size = batch_size
@@ -158,6 +158,8 @@ class QMix:
         self.target_hidden_states = None
         self.agent_nb = agent_nb
         self.action_n = action_n
+        self.state_shape = states_shape
+        self.obs_shape = obs_shape
 
         self.epsilon_greedy = EpsilonGreedy(action_n, agent_nb, final_step)
         self.episode_batch = EpisodeBatch(replay_buffer_size)
@@ -191,7 +193,6 @@ class QMix:
 
     def on_reset(self, batch_size):
         self._init_hidden_states(batch_size)
-        self.episode_batch.reset()
 
     def update_targets(self, episode):
         if episode % self.update_target_network == 0 and self.training:
@@ -201,82 +202,80 @@ class QMix:
 
     def train(self):
         if self.training and self.episode_batch.size() > self.batch_size:
-    
-            s_batch, s2_batch, a_batch, r_batch, t_batch, obs_batch, obs2_batch, available_actions_batch, available_actions2_batch, filled_batch, episode_len = self.episode_batch.sample_batch(self.batch_size)
+            for _ in range(2):
+                self._init_hidden_states(self.batch_size)
+                s_batch, s2_batch, a_batch, r_batch, t_batch, obs_batch, obs2_batch, available_actions_batch, available_actions2_batch, filled_batch, episode_len = self.episode_batch.sample_batch(self.batch_size)
 
-            mask = (1 - filled_batch) * (1 - t_batch)
+                mask = (1 - filled_batch) * (1 - t_batch)
 
-            r_batch = torch.FloatTensor(r_batch).to(device)
-            t_batch = torch.FloatTensor(t_batch).to(device)
-            mask = torch.FloatTensor(mask).to(device)
+                r_batch = torch.FloatTensor(r_batch).to(device)
+                t_batch = torch.FloatTensor(t_batch).to(device)
+                mask = torch.FloatTensor(mask).to(device)
 
-            a_batch = torch.LongTensor(a_batch).to(device)
+                a_batch = torch.LongTensor(a_batch).to(device)
 
-            self._init_hidden_states(self.batch_size)
+                mac_out = []
 
-            mac_out = []
+                for t in range(episode_len):
+                    obs = obs_batch[:, t]
+                    obs = np.concatenate(obs, axis=0)
+                    obs = torch.FloatTensor(obs).to(device)
+                    agent_actions, self.hidden_states = self.agents(obs, self.hidden_states)
+                    agent_actions = agent_actions.view(self.batch_size, self.agent_nb, -1)
+                    mac_out.append(agent_actions)
+                mac_out = torch.stack(mac_out, dim=1)
 
-            for t in range(episode_len):
-                obs = obs_batch[:, t]
-                obs = np.concatenate(obs, axis=0)
-                obs = torch.FloatTensor(obs).to(device)
-                agent_actions, self.hidden_states = self.agents(obs, self.hidden_states)
-                agent_actions = agent_actions.view(self.batch_size, self.agent_nb, -1)
-                mac_out.append(agent_actions)
-            mac_out = torch.stack(mac_out, dim=1)
+                chosen_action_qvals = torch.gather(mac_out, dim=3, index=a_batch).squeeze(3)
 
-            chosen_action_qvals = torch.gather(mac_out, dim=3, index=a_batch).squeeze(3)
+                target_mac_out = []
 
-            target_mac_out = []
+                for t in range(episode_len):
+                    obs = obs2_batch[:, t]
+                    obs = np.concatenate(obs, axis=0)
+                    obs = torch.FloatTensor(obs).to(device)
+                    agent_actions, self.target_hidden_states = self.target_agents(obs, self.target_hidden_states)
+                    agent_actions = agent_actions.view(self.batch_size, self.agent_nb, -1)
+                    target_mac_out.append(agent_actions)
+                target_mac_out = torch.stack(target_mac_out, dim=1)
+                available_actions2_batch = torch.Tensor(available_actions2_batch).to(device)
 
-            for t in range(episode_len):
-                obs = obs2_batch[:, t]
-                obs = np.concatenate(obs, axis=0)
-                obs = torch.FloatTensor(obs).to(device)
-                agent_actions, self.target_hidden_states = self.target_agents(obs, self.target_hidden_states)
-                agent_actions = agent_actions.view(self.batch_size, self.agent_nb, -1)
-                target_mac_out.append(agent_actions)
-            target_mac_out = torch.stack(target_mac_out, dim=1)
+                target_mac_out[available_actions2_batch == 0] = -9999999
+                
+                target_max_qvals = target_mac_out.max(dim=3)[0]
 
-            target_mac_out[available_actions2_batch == 0] = -9999999
+                states = torch.FloatTensor(s_batch).to(device)
+                states2 = torch.FloatTensor(s2_batch).to(device)
 
-            target_max_qvals = target_mac_out.max(dim=3)[0]
+                chosen_action_qvals = self.qmixer(chosen_action_qvals, states)
+                target_max_qvals = self.target_qmixer(target_max_qvals, states2)
 
-            states = torch.FloatTensor(s_batch).to(device)
-            states2 = torch.FloatTensor(s2_batch).to(device)
+                yi = r_batch + self.gamma * (1 - t_batch) * target_max_qvals
 
-            chosen_action_qvals = self.qmixer(chosen_action_qvals, states)
-            target_max_qvals = self.target_qmixer(target_max_qvals, states2)
+                td_error = (chosen_action_qvals - yi.detach())
 
-            yi = r_batch + self.gamma * (1 - t_batch) * target_max_qvals
+                mask = mask.expand_as(td_error)
 
-            td_error = (chosen_action_qvals - yi.detach())
+                masked_td_error = td_error * mask
 
-            mask = mask.expand_as(td_error)
+                loss = (masked_td_error ** 2).sum() / mask.sum()
 
-            masked_td_error = td_error * mask
 
-            loss = (masked_td_error ** 2).sum() / mask.sum()
-            
-
-            print('loss:', loss)
-            self.optimizer.zero_grad()
-            loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(self.params, 10)
-            self.optimizer.step()
+                print('loss:', loss)
+                self.optimizer.zero_grad()
+                loss.backward()
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.params, 10)
+                self.optimizer.step()
             
             pass
         pass
 
-    def enable_mode(self):
-        pass
 
-    def act(self, obs, agents_available_actions):
+    def act(self, batch, obs, agents_available_actions):
         value_action, self.hidden_states = self.agents(obs, self.hidden_states)
         value_action[agents_available_actions == 0] = -1e10
         if self.training:
             value_action = self.epsilon_greedy.act(value_action, agents_available_actions)
         else:
             value_action = np.argmax(value_action.cpu().data.numpy(), -1)
-        value_action = value_action.reshape(value_action.shape[0], 1)
+        value_action = value_action.reshape(batch, self.agent_nb, -1)
         return value_action
