@@ -115,7 +115,7 @@ def env_run(scenario, id, child_conn, locker, replay_buffer_size):
             obs2 = np.concatenate([obs2, actions_one_hot_agents, agent_id_one_hot_array], axis=-1)
             state2 = np.array(env.get_state())
 
-            child_conn.send(["replay_buffer", state, state2, actions, [reward], [terminated], obs, obs2, agents_available_actions, agents_available_actions2, 0])
+            child_conn.send(["replay_buffer", state, actions, [reward], [terminated], obs, agents_available_actions, 0])
             #replay_buffer.add(state, state2, actions, [reward], [terminated], obs, obs2, agents_available_actions, agents_available_actions2, 0)
 
             #self.qmix_algo.decay_epsilon_greddy(self.episode_global_step)
@@ -130,7 +130,7 @@ def env_run(scenario, id, child_conn, locker, replay_buffer_size):
 
         for _ in range(episode_step, replay_buffer_size):
             child_conn.send(["actions", obs_zeros, agents_available_actions_zeros])
-            child_conn.send(["replay_buffer", state_zeros, state_zeros, actions_zeros, [reward_zeros], [True], obs_zeros, obs_zeros, agents_available_actions_zeros, agents_available_actions_zeros, 1])
+            child_conn.send(["replay_buffer", state_zeros, actions_zeros, [reward_zeros], [True], obs_zeros, agents_available_actions_zeros, 1])
             child_conn.recv()
             #replay_buffer.add(state_zeros, state_zeros, actions_zeros, [reward_zeros], [True], obs_zeros, obs_zeros, agents_available_actions_zeros, agents_available_actions_zeros, 1)
 
@@ -152,7 +152,7 @@ class Runner:
         self.obs_shape = env_info["obs_shape"] + self.n_agents + self.n_actions
         self.episode_limit = env_info['episode_limit']
 
-        self.qmix_algo = qmix.QMix(arglist.train, self.n_agents, self.obs_shape, self.state_shape, self.n_actions, 0.0005)
+        self.qmix_algo = qmix.QMix(arglist.train, self.n_agents, self.obs_shape, self.state_shape, self.n_actions, 0.0005, replay_buffer_size=1000)
         if arglist.train == False:
             self.qmix_algo.load_model('./saved/agents_' + str(arglist.load_episode_saved))
             print('Load model agent ', str(arglist.load_episode_saved))
@@ -213,7 +213,7 @@ class Runner:
                         actions = self.qmix_algo.act(self.actors, torch.FloatTensor(obs_batch).to(device), torch.FloatTensor(available_batch).to(device))
                 
                 elif data[0] == "replay_buffer":
-                    self.replay_buffers[idx].add(data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], data[10])
+                    self.replay_buffers[idx].add(data[1], data[2], data[3], data[4], data[5], data[6], data[7])
 
                 elif data[0] == "episode_end":
                     self.episode_reward[idx] = data[1]

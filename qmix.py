@@ -43,8 +43,8 @@ class ReplayBuffer(object):
         self.count = 0
         self.buffer = deque()
 
-    def add(self, s, s2, a, r, t, obs, obs2, available_actions, agents_available_actions2, filled):
-        experience = [s, s2, a, r, t, obs, obs2, available_actions, agents_available_actions2, np.array([filled])]
+    def add(self, s, a, r, t, obs, available_actions, filled):
+        experience = [s, a, r, t, obs, available_actions, np.array([filled])]
         if self.count < self.buffer_size: 
             self.buffer.append(experience)
             self.count += 1
@@ -63,17 +63,14 @@ class ReplayBuffer(object):
         batch = np.array(batch)
         
         s_batch = np.array([_[0] for _ in batch], dtype='float32')
-        s2_batch = np.array([_[1] for _ in batch], dtype='float32')
-        a_batch = np.array([_[2] for _ in batch], dtype='float32')
-        r_batch = np.array([_[3] for _ in batch])
-        t_batch = np.array([_[4] for _ in batch])
-        obs_batch = np.array([_[5] for _ in batch], dtype='float32')
-        obs2_batch = np.array([_[6] for _ in batch], dtype='float32')
-        available_actions_batch = np.array([_[7] for _ in batch], dtype='float32')
-        available_actions2_batch = np.array([_[8] for _ in batch])
-        filled_batch = np.array([_[9] for _ in batch], dtype='float32')
+        a_batch = np.array([_[1] for _ in batch], dtype='float32')
+        r_batch = np.array([_[2] for _ in batch])
+        t_batch = np.array([_[3] for _ in batch])
+        obs_batch = np.array([_[4] for _ in batch], dtype='float32')
+        available_actions_batch = np.array([_[5] for _ in batch], dtype='float32')
+        filled_batch = np.array([_[6] for _ in batch], dtype='float32')
 
-        return s_batch, s2_batch, a_batch, r_batch, t_batch, obs_batch, obs2_batch, available_actions_batch, available_actions2_batch, filled_batch
+        return s_batch, a_batch, r_batch, t_batch, obs_batch, available_actions_batch, filled_batch
 
     def clear(self):
         self.buffer.clear()
@@ -100,7 +97,7 @@ class EpisodeBatch:
         max_episode_len = 0
 
         for replay_buffer in batch:
-            _, _, _, _, t, _, _, _, _, _ = replay_buffer.sample_batch(replay_buffer.size())
+            _, _, _, t, _, _, _ = replay_buffer.sample_batch(replay_buffer.size())
             for idx, t_idx in enumerate(t):
                 if t_idx == True:
                     if idx > max_episode_len:
@@ -118,18 +115,15 @@ class EpisodeBatch:
         else:
             batch = random.sample(self.buffer, batch_size)
         episode_len = self._get_max_episode_len(batch)
-        s_batch, s2_batch, a_batch, r_batch, t_batch, obs_batch, obs2_batch, available_actions_batch, available_actions2_batch, filled_batch = [], [], [], [], [], [], [], [], [], []
+        s_batch, a_batch, r_batch, t_batch, obs_batch, available_actions_batch, filled_batch = [], [], [], [], [], [], []
         for replay_buffer in batch:
-            s, s2, a, r, t, obs, obs2, available_actions, available_actions2, filled = replay_buffer.sample_batch(episode_len)
+            s, a, r, t, obs, available_actions, filled = replay_buffer.sample_batch(episode_len)
             s_batch.append(s)
-            s2_batch.append(s2)
             a_batch.append(a)
             r_batch.append(r)
             t_batch.append(t)
             obs_batch.append(obs)
-            obs2_batch.append(obs2)
             available_actions_batch.append(available_actions)
-            available_actions2_batch.append(available_actions2)
             filled_batch.append(filled)
         
         filled_batch = np.array(filled_batch)
@@ -137,11 +131,11 @@ class EpisodeBatch:
         t_batch = np.array(t_batch)
         a_batch = np.array(a_batch)
         obs_batch = np.array(obs_batch)
-        obs2_batch = np.array(obs2_batch)
         available_actions_batch = np.array(available_actions_batch)
-        available_actions2_batch = np.array(available_actions2_batch)
 
-        return s_batch, s2_batch, a_batch, r_batch, t_batch, obs_batch, obs2_batch, available_actions_batch, available_actions2_batch, filled_batch, episode_len
+
+
+        return s_batch, a_batch, r_batch, t_batch, obs_batch, available_actions_batch, filled_batch, episode_len
 
         #return batch
     
@@ -204,7 +198,12 @@ class QMix:
         if self.training and self.episode_batch.size() > self.batch_size:
             for _ in range(2):
                 self._init_hidden_states(self.batch_size)
-                s_batch, s2_batch, a_batch, r_batch, t_batch, obs_batch, obs2_batch, available_actions_batch, available_actions2_batch, filled_batch, episode_len = self.episode_batch.sample_batch(self.batch_size)
+                s_batch, a_batch, r_batch, t_batch, obs_batch, available_actions_batch, filled_batch, episode_len = self.episode_batch.sample_batch(self.batch_size)
+
+                r_batch = r_batch[:, :-1]
+                a_batch = a_batch[:, :-1]
+                t_batch = t_batch[:, :-1]
+                filled_batch = filled_batch[:, :-1]
 
                 mask = (1 - filled_batch) * (1 - t_batch)
 
@@ -225,29 +224,29 @@ class QMix:
                     mac_out.append(agent_actions)
                 mac_out = torch.stack(mac_out, dim=1)
 
-                chosen_action_qvals = torch.gather(mac_out, dim=3, index=a_batch).squeeze(3)
+                chosen_action_qvals = torch.gather(mac_out[:, :-1], dim=3, index=a_batch).squeeze(3)
 
                 target_mac_out = []
 
                 for t in range(episode_len):
-                    obs = obs2_batch[:, t]
+                    obs = obs_batch[:, t]
                     obs = np.concatenate(obs, axis=0)
                     obs = torch.FloatTensor(obs).to(device)
                     agent_actions, self.target_hidden_states = self.target_agents(obs, self.target_hidden_states)
                     agent_actions = agent_actions.view(self.batch_size, self.agent_nb, -1)
                     target_mac_out.append(agent_actions)
-                target_mac_out = torch.stack(target_mac_out, dim=1)
-                available_actions2_batch = torch.Tensor(available_actions2_batch).to(device)
+                target_mac_out = torch.stack(target_mac_out[1:], dim=1)
+                available_actions_batch = torch.Tensor(available_actions_batch).to(device)
 
-                target_mac_out[available_actions2_batch == 0] = -9999999
+                target_mac_out[available_actions_batch[:, 1:] == 0] = -9999999
                 
                 target_max_qvals = target_mac_out.max(dim=3)[0]
 
                 states = torch.FloatTensor(s_batch).to(device)
-                states2 = torch.FloatTensor(s2_batch).to(device)
+                #states2 = torch.FloatTensor(s2_batch).to(device)
 
-                chosen_action_qvals = self.qmixer(chosen_action_qvals, states)
-                target_max_qvals = self.target_qmixer(target_max_qvals, states2)
+                chosen_action_qvals = self.qmixer(chosen_action_qvals, states[:, :-1])
+                target_max_qvals = self.target_qmixer(target_max_qvals, states[:, 1:])
 
                 yi = r_batch + self.gamma * (1 - t_batch) * target_max_qvals
 
